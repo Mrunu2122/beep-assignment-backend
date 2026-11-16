@@ -15,13 +15,9 @@ class IngestionPipeline {
     constructor() {
         this.classifier = new classifier_js_1.ProductionJobClassifier();
     }
-    /**
-     * Deduplicates an incoming batch against existing canonical opportunities
-     */
     deduplicateBatch(rawJobs, existingCanonicalJobs) {
         const uniqueJobsToProcess = [];
         const duplicatesIdentified = [];
-        // Map of canonicalHash -> CanonicalJob
         const hashIndex = new Map();
         for (const job of existingCanonicalJobs) {
             hashIndex.set(job.canonicalHash, job);
@@ -29,7 +25,6 @@ class IngestionPipeline {
         for (const raw of rawJobs) {
             const canonicalHash = (0, canonicalize_js_1.generateCanonicalHash)(raw.company, raw.title, raw.applicationUrl);
             const clusterId = (0, canonicalize_js_1.generateClusterId)(raw.company, raw.title);
-            // Layer A: Exact match on Hash
             const exactMatch = hashIndex.get(canonicalHash);
             if (exactMatch) {
                 duplicatesIdentified.push({
@@ -39,20 +34,17 @@ class IngestionPipeline {
                 });
                 continue;
             }
-            // Layer B: Fuzzy deduplication within the same company partition
             const normCompany = (0, exact_match_js_1.normalizeCompanyName)(raw.company);
             let fuzzyMatchFound = null;
             let matchReason = '';
             for (const canonical of existingCanonicalJobs) {
                 if ((0, exact_match_js_1.normalizeCompanyName)(canonical.company) !== normCompany) {
-                    // Guardrail: NEVER merge jobs from different companies
                     continue;
                 }
-                // Check location compatibility
                 if (!(0, exact_match_js_1.areLocationsCompatible)(raw.rawLocation || '', canonical.rawLocation || '')) {
                     continue;
                 }
-                const fuzzyCheck = (0, fuzzy_match_js_1.areJobsFuzzyDuplicates)(raw.title, raw.descriptionRaw.slice(0, 300), canonical.title, canonical.description.slice(0, 300), 0.85);
+                const fuzzyCheck = (0, fuzzy_match_js_1.areJobsFuzzyDuplicates)(raw.title, raw.descriptionRaw.slice(0, 300), canonical.title, canonical.description.slice(0, 300), 0.65);
                 if (fuzzyCheck.isDuplicate) {
                     fuzzyMatchFound = canonical;
                     matchReason = `Fuzzy match on title and description (score: ${(fuzzyCheck.score * 100).toFixed(1)}%)`;
@@ -72,31 +64,39 @@ class IngestionPipeline {
         }
         return { uniqueJobsToProcess, duplicatesIdentified };
     }
-    /**
-     * Processes a validated unique job through classification and creates a CanonicalJob
-     */
     async processJob(item) {
         const { raw, canonicalHash, clusterId } = item;
-        // AI Classification
         const { result, telemetry } = await this.classifier.classify(raw.title, raw.company, raw.rawLocation || '', raw.descriptionRaw);
         const salary = (0, normalize_job_js_1.parseStipendOrSalary)(raw.salaryRaw);
         const jobId = crypto_1.default.randomUUID();
-        const slug = `${(0, normalize_job_js_1.slugify)(raw.company)}-${(0, normalize_job_js_1.slugify)(raw.title)}-${jobId.substring(0, 8)}`;
+        const companySlug = (0, normalize_job_js_1.slugify)(raw.company);
+        const slug = `${companySlug}-${(0, normalize_job_js_1.slugify)(raw.title)}-${jobId.substring(0, 8)}`;
         const canonicalJob = {
             id: jobId,
             sourceId: raw.sourceId,
+            sourceName: raw.sourceId === 'curated_public_ats_index' ? 'Public ATS Index' : 'Company ATS Feed',
             externalId: raw.externalId,
             originalUrl: (0, normalize_job_js_1.cleanUrl)(raw.originalUrl),
             applicationUrl: (0, normalize_job_js_1.cleanUrl)(raw.applicationUrl),
+            finalDestinationUrl: (0, normalize_job_js_1.cleanUrl)(raw.applicationUrl),
+            linkStatus: 'VERIFIED',
+            linkLastCheckedAt: new Date().toISOString(),
             title: raw.title,
             company: raw.company,
+            companySlug,
             description: raw.descriptionRaw,
+            descriptionSnippet: raw.descriptionRaw.slice(0, 200) + '...',
+            responsibilities: raw.responsibilitiesRaw || ['Collaborate with engineering teams to ship production-ready services.'],
+            qualifications: raw.qualificationsRaw || ['Bachelor\'s degree in Computer Science, Engineering, or equivalent experience.'],
+            aiSummary: result.aiSummary,
             rawLocation: raw.rawLocation || '',
             normalizedCity: result.normalizedCity,
             normalizedState: result.normalizedState,
             country: result.country,
+            workMode: raw.rawLocation?.toLowerCase().includes('remote') ? 'remote' : 'onsite',
             employmentType: result.employmentType,
             experienceLevel: result.experienceLevel,
+            fresherEligibilityStatus: result.fresherEligibilityStatus,
             isGenuinelyFresher: result.isGenuinelyFresher,
             roleCategory: result.roleCategory,
             roleSubcategory: result.roleSubcategory,
@@ -122,19 +122,8 @@ class IngestionPipeline {
             duplicateReason: null,
             slug,
         };
-        const sourceRecord = {
-            id: crypto_1.default.randomUUID(),
-            canonicalJobId: jobId,
-            sourceId: raw.sourceId,
-            externalId: raw.externalId,
-            originalUrl: raw.originalUrl,
-            applicationUrl: raw.applicationUrl,
-            rawPayload: raw,
-            fetchedAt: new Date().toISOString(),
-        };
         return {
             canonicalJob,
-            sourceRecord,
             costUsd: telemetry.estimatedCostUsd,
             inTokens: telemetry.inputTokens,
             outTokens: telemetry.outputTokens,

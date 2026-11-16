@@ -7,7 +7,7 @@ const logger_js_1 = require("../monitoring/logger.js");
 const shared_1 = require("@launchpad/shared");
 class ProductionJobClassifier {
     genAI = null;
-    promptVersion = 'v2.0.0-production';
+    promptVersion = 'v2.1.0-audited';
     constructor() {
         if (index_js_1.config.gemini.apiKey) {
             this.genAI = new generative_ai_1.GoogleGenerativeAI(index_js_1.config.gemini.apiKey);
@@ -17,7 +17,6 @@ class ProductionJobClassifier {
         const startTime = Date.now();
         let retryCount = 0;
         const maxRetries = 2;
-        // If no key or local mock mode, use conservative deterministic classification
         if (!this.genAI || !index_js_1.config.gemini.apiKey) {
             const fallbackResult = this.conservativeRuleFallback(title, company, rawLocation, rawDescription);
             return {
@@ -49,9 +48,11 @@ Rules:
 1. roleCategory: Choose strictly from the fixed taxonomy above.
 2. roleSubcategory: Choose the closest matching subcategory or specify.
 3. normalizedCity: Conservative classification. If completely remote across India, return 'Remote (India)'. If indeterminate or outside major Indian hubs, return 'Unknown'.
-4. isGenuinelyFresher: true ONLY IF 0-1 years of experience, campus graduate 2024/2025/2026, apprentice, or intern. If 2+ years required, set false.
-5. confidenceScore: Float from 0.0 to 1.0.
-6. reasoningBrief: Max 200 characters explaining the choice.
+4. fresherEligibilityStatus: 'Fresher eligible' | 'Internship' | 'Experience required' | 'Experience not specified' | 'Eligibility uncertain'
+5. isGenuinelyFresher: true ONLY IF 0-1 years of experience, campus graduate 2024/2025/2026, apprentice, or intern. If 2+ years required, set false.
+6. confidenceScore: Float from 0.0 to 1.0.
+7. reasoningBrief: Max 200 characters explaining the choice.
+8. aiSummary: 1-2 sentence objective summary derived exclusively from the description.
 
 Job Data:
 Title: ${title}
@@ -77,8 +78,7 @@ Respond ONLY with valid JSON.
                 const validated = shared_1.AIClassificationResultSchema.parse(parsedJson);
                 const usage = apiRes.response.usageMetadata;
                 const inTokens = usage?.promptTokenCount || 450;
-                const outTokens = usage?.candidatesTokenCount || 85;
-                // Pricing: $0.075/1M input, $0.30/1M output
+                const outTokens = usage?.candidatesTokenCount || 82;
                 const costUsd = (inTokens / 1_000_000) * 0.075 + (outTokens / 1_000_000) * 0.30;
                 return {
                     result: validated,
@@ -102,11 +102,9 @@ Respond ONLY with valid JSON.
                     });
                     break;
                 }
-                // exponential backoff with jitter
                 await new Promise(r => setTimeout(r, 1000 * retryCount + Math.random() * 200));
             }
         }
-        // Fallback if LLM unavailable
         const fallbackResult = this.conservativeRuleFallback(title, company, rawLocation, rawDescription);
         return {
             result: fallbackResult,
@@ -126,7 +124,6 @@ Respond ONLY with valid JSON.
     conservativeRuleFallback(title, company, rawLocation, description) {
         const combined = `${title} ${description}`.toLowerCase();
         const loc = `${rawLocation} ${description}`.toLowerCase();
-        // 1. Role category & subcategory
         let roleCategory = 'Software Engineering';
         let roleSubcategory = 'Full Stack Engineering';
         if (combined.includes('data engineer') || combined.includes('etl') || combined.includes('spark')) {
@@ -161,7 +158,6 @@ Respond ONLY with valid JSON.
             roleCategory = 'Software Engineering';
             roleSubcategory = 'Backend Engineering';
         }
-        // 2. Conservative City Normalization
         let normalizedCity = 'Unknown';
         if (loc.includes('remote') || loc.includes('anywhere')) {
             normalizedCity = 'Remote (India)';
@@ -185,9 +181,8 @@ Respond ONLY with valid JSON.
             normalizedCity = 'Chennai';
         }
         const normalizedState = shared_1.INDIAN_STATES[normalizedCity] || 'Unknown';
-        // 3. Fresher eligibility
         const isIntern = combined.includes('intern') || combined.includes('trainee') || combined.includes('campus');
-        const isGenuinelyFresher = isIntern || !combined.includes('2+ years') && !combined.includes('3+ years');
+        const isGenuinelyFresher = isIntern || (!combined.includes('2+ years') && !combined.includes('3+ years'));
         return {
             roleCategory,
             roleSubcategory,
@@ -196,10 +191,12 @@ Respond ONLY with valid JSON.
             country: 'India',
             employmentType: isIntern ? 'internship' : 'full_time',
             experienceLevel: isIntern ? 'Internship' : 'Fresher / Entry Level',
+            fresherEligibilityStatus: isIntern ? 'Internship' : 'Fresher eligible',
             isGenuinelyFresher,
             skills: ['Problem Solving', 'Data Structures', 'Git'],
             confidenceScore: 0.90,
             reasoningBrief: 'Rule-based deterministic extraction on verified ATS fields.',
+            aiSummary: `Early-career ${roleSubcategory} position at ${company} in ${normalizedCity}.`,
         };
     }
 }

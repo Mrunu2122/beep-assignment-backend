@@ -7,7 +7,6 @@ import {
   FIXED_ROLE_CATEGORIES,
   ROLE_SUBCATEGORIES,
   FixedRoleCategory,
-  INDIAN_TECH_CITIES,
   INDIAN_STATES,
 } from '@launchpad/shared';
 
@@ -25,7 +24,7 @@ export interface ClassificationTelemetry {
 
 export class ProductionJobClassifier {
   private genAI: GoogleGenerativeAI | null = null;
-  private readonly promptVersion = 'v2.0.0-production';
+  private readonly promptVersion = 'v2.1.0-audited';
 
   constructor() {
     if (config.gemini.apiKey) {
@@ -43,7 +42,6 @@ export class ProductionJobClassifier {
     let retryCount = 0;
     const maxRetries = 2;
 
-    // If no key or local mock mode, use conservative deterministic classification
     if (!this.genAI || !config.gemini.apiKey) {
       const fallbackResult = this.conservativeRuleFallback(title, company, rawLocation, rawDescription);
       return {
@@ -77,9 +75,11 @@ Rules:
 1. roleCategory: Choose strictly from the fixed taxonomy above.
 2. roleSubcategory: Choose the closest matching subcategory or specify.
 3. normalizedCity: Conservative classification. If completely remote across India, return 'Remote (India)'. If indeterminate or outside major Indian hubs, return 'Unknown'.
-4. isGenuinelyFresher: true ONLY IF 0-1 years of experience, campus graduate 2024/2025/2026, apprentice, or intern. If 2+ years required, set false.
-5. confidenceScore: Float from 0.0 to 1.0.
-6. reasoningBrief: Max 200 characters explaining the choice.
+4. fresherEligibilityStatus: 'Fresher eligible' | 'Internship' | 'Experience required' | 'Experience not specified' | 'Eligibility uncertain'
+5. isGenuinelyFresher: true ONLY IF 0-1 years of experience, campus graduate 2024/2025/2026, apprentice, or intern. If 2+ years required, set false.
+6. confidenceScore: Float from 0.0 to 1.0.
+7. reasoningBrief: Max 200 characters explaining the choice.
+8. aiSummary: 1-2 sentence objective summary derived exclusively from the description.
 
 Job Data:
 Title: ${title}
@@ -109,9 +109,8 @@ Respond ONLY with valid JSON.
 
         const usage = apiRes.response.usageMetadata;
         const inTokens = usage?.promptTokenCount || 450;
-        const outTokens = usage?.candidatesTokenCount || 85;
+        const outTokens = usage?.candidatesTokenCount || 82;
 
-        // Pricing: $0.075/1M input, $0.30/1M output
         const costUsd = (inTokens / 1_000_000) * 0.075 + (outTokens / 1_000_000) * 0.30;
 
         return {
@@ -135,12 +134,10 @@ Respond ONLY with valid JSON.
           });
           break;
         }
-        // exponential backoff with jitter
         await new Promise(r => setTimeout(r, 1000 * retryCount + Math.random() * 200));
       }
     }
 
-    // Fallback if LLM unavailable
     const fallbackResult = this.conservativeRuleFallback(title, company, rawLocation, rawDescription);
     return {
       result: fallbackResult,
@@ -167,7 +164,6 @@ Respond ONLY with valid JSON.
     const combined = `${title} ${description}`.toLowerCase();
     const loc = `${rawLocation} ${description}`.toLowerCase();
 
-    // 1. Role category & subcategory
     let roleCategory: FixedRoleCategory = 'Software Engineering';
     let roleSubcategory = 'Full Stack Engineering';
 
@@ -197,7 +193,6 @@ Respond ONLY with valid JSON.
       roleSubcategory = 'Backend Engineering';
     }
 
-    // 2. Conservative City Normalization
     let normalizedCity = 'Unknown';
     if (loc.includes('remote') || loc.includes('anywhere')) {
       normalizedCity = 'Remote (India)';
@@ -217,9 +212,8 @@ Respond ONLY with valid JSON.
 
     const normalizedState = INDIAN_STATES[normalizedCity] || 'Unknown';
 
-    // 3. Fresher eligibility
     const isIntern = combined.includes('intern') || combined.includes('trainee') || combined.includes('campus');
-    const isGenuinelyFresher = isIntern || !combined.includes('2+ years') && !combined.includes('3+ years');
+    const isGenuinelyFresher = isIntern || (!combined.includes('2+ years') && !combined.includes('3+ years'));
 
     return {
       roleCategory,
@@ -229,10 +223,12 @@ Respond ONLY with valid JSON.
       country: 'India',
       employmentType: isIntern ? 'internship' : 'full_time',
       experienceLevel: isIntern ? 'Internship' : 'Fresher / Entry Level',
+      fresherEligibilityStatus: isIntern ? 'Internship' : 'Fresher eligible',
       isGenuinelyFresher,
       skills: ['Problem Solving', 'Data Structures', 'Git'],
       confidenceScore: 0.90,
       reasoningBrief: 'Rule-based deterministic extraction on verified ATS fields.',
+      aiSummary: `Early-career ${roleSubcategory} position at ${company} in ${normalizedCity}.`,
     };
   }
 }

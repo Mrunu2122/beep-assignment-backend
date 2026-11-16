@@ -16,12 +16,10 @@ const orchestrator_js_1 = require("./ingestion/orchestrator.js");
 const job_repository_js_1 = require("./database/repositories/job-repository.js");
 const shared_1 = require("@launchpad/shared");
 const crypto_1 = __importDefault(require("crypto"));
-// Register public adapters
 base_js_1.sourceRegistry.register(new greenhouse_js_1.GreenhouseSourceAdapter());
 base_js_1.sourceRegistry.register(new lever_js_1.LeverSourceAdapter());
 base_js_1.sourceRegistry.register(new curated_index_js_1.CuratedFresherIndexAdapter());
 const pipeline = new orchestrator_js_1.IngestionPipeline();
-// Helper to send JSON responses
 function sendJson(res, statusCode, data) {
     res.writeHead(statusCode, {
         'Content-Type': 'application/json',
@@ -32,7 +30,6 @@ function sendJson(res, statusCode, data) {
     res.end(JSON.stringify(data));
 }
 const server = http_1.default.createServer(async (req, res) => {
-    // CORS Preflight
     if (req.method === 'OPTIONS') {
         res.writeHead(204, {
             'Access-Control-Allow-Origin': '*',
@@ -46,7 +43,6 @@ const server = http_1.default.createServer(async (req, res) => {
     const pathname = reqUrl.pathname;
     const method = req.method;
     try {
-        // 1. GET /api/jobs
         if (method === 'GET' && pathname === '/api/jobs') {
             const searchParams = Object.fromEntries(reqUrl.searchParams.entries());
             const queryValidation = shared_1.JobListQuerySchema.safeParse(searchParams);
@@ -58,29 +54,27 @@ const server = http_1.default.createServer(async (req, res) => {
             }
             const q = queryValidation.data;
             let allJobs = job_repository_js_1.ingestionStore.getAllJobs();
-            // Search & Filters
             if (q.q) {
                 const queryTerm = q.q.toLowerCase();
                 allJobs = allJobs.filter(j => j.title.toLowerCase().includes(queryTerm) ||
                     j.company.toLowerCase().includes(queryTerm) ||
                     j.skills.some(s => s.toLowerCase().includes(queryTerm)));
             }
-            if (q.roleCategory) {
+            if (q.roleCategory && q.roleCategory !== 'All') {
                 allJobs = allJobs.filter(j => j.roleCategory === q.roleCategory);
             }
-            if (q.city) {
+            if (q.city && q.city !== 'All') {
                 allJobs = allJobs.filter(j => j.normalizedCity.toLowerCase() === q.city.toLowerCase());
             }
-            if (q.employmentType) {
+            if (q.employmentType && q.employmentType !== 'All') {
                 allJobs = allJobs.filter(j => j.employmentType === q.employmentType);
             }
-            if (q.experienceLevel) {
-                allJobs = allJobs.filter(j => j.experienceLevel === q.experienceLevel);
+            if (q.workMode && q.workMode !== 'All') {
+                allJobs = allJobs.filter(j => j.workMode === q.workMode);
             }
             if (q.fresherOnly) {
                 allJobs = allJobs.filter(j => j.isGenuinelyFresher);
             }
-            // Sorting
             if (q.sortBy === 'newest') {
                 allJobs.sort((a, b) => new Date(b.discoveredAt).getTime() - new Date(a.discoveredAt).getTime());
             }
@@ -103,7 +97,6 @@ const server = http_1.default.createServer(async (req, res) => {
                 },
             });
         }
-        // 2. GET /api/jobs/:id
         if (method === 'GET' && pathname.startsWith('/api/jobs/')) {
             const idOrSlug = pathname.replace('/api/jobs/', '');
             const job = job_repository_js_1.ingestionStore.getJobById(idOrSlug) || job_repository_js_1.ingestionStore.getJobBySlug(idOrSlug);
@@ -112,17 +105,14 @@ const server = http_1.default.createServer(async (req, res) => {
             }
             return sendJson(res, 200, { data: job });
         }
-        // 3. GET /api/sources
         if (method === 'GET' && pathname === '/api/sources') {
             return sendJson(res, 200, { data: base_js_1.sourceRegistry.listMetadata() });
         }
-        // 4. GET /api/analytics
         if (method === 'GET' && pathname === '/api/analytics') {
             const jobs = job_repository_js_1.ingestionStore.getAllJobs();
             const uniqueCompanies = new Set(jobs.map(j => j.company)).size;
             const uniqueCities = new Set(jobs.map(j => j.normalizedCity)).size;
             const freshCount = jobs.filter(j => j.isGenuinelyFresher).length;
-            // Source distribution
             const sourceMap = {};
             for (const j of jobs) {
                 sourceMap[j.sourceId] = (sourceMap[j.sourceId] || 0) + 1;
@@ -132,7 +122,6 @@ const server = http_1.default.createServer(async (req, res) => {
                 count,
                 percentage: Number(((count / jobs.length) * 100).toFixed(1)),
             }));
-            // City distribution
             const cityMap = {};
             for (const j of jobs) {
                 cityMap[j.normalizedCity] = (cityMap[j.normalizedCity] || 0) + 1;
@@ -152,14 +141,12 @@ const server = http_1.default.createServer(async (req, res) => {
                 latestRun: job_repository_js_1.ingestionStore.getLatestRun() || null,
             });
         }
-        // 5. GET /api/ingestion/status
         if (method === 'GET' && pathname === '/api/ingestion/status') {
             return sendJson(res, 200, {
                 latestRun: job_repository_js_1.ingestionStore.getLatestRun() || null,
                 recentRuns: job_repository_js_1.ingestionStore.getRuns(),
             });
         }
-        // 6. POST /api/cron/ingest (Protected by CRON_SECRET or Admin Token)
         if (method === 'POST' && pathname === '/api/cron/ingest') {
             const authHeader = req.headers['authorization'];
             const cronSecretHeader = req.headers['x-cron-secret'];
@@ -186,7 +173,6 @@ const server = http_1.default.createServer(async (req, res) => {
                     const existingJobs = job_repository_js_1.ingestionStore.getAllJobs();
                     const { uniqueJobsToProcess, duplicatesIdentified } = pipeline.deduplicateBatch(raw, existingJobs);
                     totalDuplicates += duplicatesIdentified.length;
-                    // Limit batch processing for serverless bounds (e.g. process up to 10 per source run to respect latency limits)
                     const boundedBatch = uniqueJobsToProcess.slice(0, 10);
                     let insertedForSource = 0;
                     for (const item of boundedBatch) {
@@ -239,7 +225,6 @@ const server = http_1.default.createServer(async (req, res) => {
                 summary,
             });
         }
-        // Default 404
         return sendJson(res, 404, { error: 'Route not found' });
     }
     catch (err) {
