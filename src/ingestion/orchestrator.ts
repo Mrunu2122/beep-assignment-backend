@@ -4,7 +4,6 @@ import { generateCanonicalHash, generateClusterId } from '../deduplication/canon
 import { areJobsFuzzyDuplicates } from '../deduplication/fuzzy-match.js';
 import { areLocationsCompatible, normalizeCompanyName } from '../deduplication/exact-match.js';
 import { ProductionJobClassifier } from '../ai/classifier.js';
-import { logger } from '../monitoring/logger.js';
 import crypto from 'crypto';
 
 export class IngestionPipeline {
@@ -110,8 +109,16 @@ export class IngestionPipeline {
       originalUrl: cleanUrl(raw.originalUrl),
       applicationUrl: cleanUrl(raw.applicationUrl),
       finalDestinationUrl: cleanUrl(raw.applicationUrl),
-      linkStatus: 'VERIFIED',
-      linkLastCheckedAt: new Date().toISOString(),
+      listingStatus: 'ACTIVE',
+      sourceLastVerifiedAt: new Date().toISOString(),
+      lastSuccessfulSourceCheck: new Date().toISOString(),
+      consecutiveMissingChecks: 0,
+      firstMissingAt: null,
+      expiredAt: null,
+      statusReason: 'Initial ingestion from verified ATS source',
+      sourcePostingId: raw.sourcePostingId || raw.externalId,
+      sourceBoardToken: raw.sourceBoardToken || null,
+      applicationUrlStatus: 'VERIFIED',
       title: raw.title,
       company: raw.company,
       companySlug,
