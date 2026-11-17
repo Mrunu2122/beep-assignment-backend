@@ -20,10 +20,12 @@
     "mammoth": "^1.13.0",
     "pdf-parse": "^2.4.5",
     "sanitize-html": "^2.17.5",
+    "ws": "^8.18.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/node": "^22.8.7",
+    "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   }
