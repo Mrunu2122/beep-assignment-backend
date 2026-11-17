@@ -1,0 +1,11 @@
+{
+  "name": "beep-assignment-backend",
+  "version": "1.0.0",
+  "status": "online",
+  "endpoints": {
+    "cron": "/api/cron",
+    "jobs": "/api/jobs",
+    "analytics": "/api/analytics",
+    "ingestion_status": "/api/ingestion/status"
+  }
+}
