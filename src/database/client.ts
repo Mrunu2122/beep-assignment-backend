@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import WebSocket from 'ws';
 import { config } from '../config/index.js';
 import { logger } from '../monitoring/logger.js';
 
@@ -16,7 +17,8 @@ export function getSupabaseClient(): SupabaseClient | null {
   }
 
   supabaseInstance = createClient(url, key, {
-    auth: { persistSession: false },
+    auth: { persistSession: false, autoRefreshToken: false },
+    realtime: { transport: WebSocket as any }
   });
 
   return supabaseInstance;

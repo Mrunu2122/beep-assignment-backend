@@ -4,19 +4,22 @@
   "private": true,
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc -b",
-    "start": "node dist/index.js",
+    "build": "tsc",
+    "start": "node dist/src/index.js",
     "dev": "tsx watch src/index.ts",
-    "seed": "tsx ../scripts/seed-data.ts",
-    "evaluate": "tsx ../scripts/evaluate-dataset.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test"
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
-    "@launchpad/shared": "*",
     "@supabase/supabase-js": "^2.46.1",
+    "@types/sanitize-html": "^2.16.2",
+    "@vercel/node": "^3.2.29",
     "dotenv": "^16.4.5",
+    "html-entities": "^2.6.0",
+    "mammoth": "^1.13.0",
+    "pdf-parse": "^2.4.5",
+    "sanitize-html": "^2.17.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
